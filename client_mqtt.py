@@ -70,6 +70,7 @@ class Client:
         self.port = port
         self.host = host
         self.known_clients = [self.uuid]
+        self.current_round = 0
 
         self.min_clients_per_round = min_clients_per_round
         self.max_rounds = max_rounds
@@ -119,7 +120,7 @@ class Client:
         while time.time() - start < TIMEOUT_LIMIT or len(self.known_clients) < QTDE_CLIENTS:
             self.client.publish("InitMsg", msg)
             time.sleep(10)
-
+        quit()
 
     def on_message(self, client, userdata, msg):
         """
@@ -216,13 +217,40 @@ class Client:
 
 
     def on_round(self, msg):
-        self.weights.append({'weights': json.loads(msg)['weights'], 'sample_amount': json.loads(msg)['sample_amount']})
+        if len(self.weights) < self.n:
+            self.weights.append({'weights': json.loads(msg)['weights'], 'sample_amount': json.loads(msg)['sample_amount']})
+
+        else:
+            avg_weights = self.__federeated_train()
+            self.model.set_weights(avg_weights)
+
+            self.client.publish("AggregationMsg", json.dumps({"weights": avg_weights }))
         
     def on_aggregation(self, msg):
         pass
 
     def on_evaluation(self, msg):
-        pass
+        if len(self.metrics) < self.known_clients:
+            self.metrics.append(json.loads(msg)['accuracy'])
+        else:
+            accuracy_mean = np.mean(self.metrics)
+            print(f"[{datetime.datetime.now()}] Mean accuracy: {accuracy_mean * 100: 0.2f}.")
+
+            # if self.save_test:
+            #     self.__save_test(accuracy_mean)
+
+            if accuracy_mean >= self.accuracy_threshold:
+                print(f"[{datetime.datetime.now()}] Accuracy threshold reached. Stopping rounds.")
+                self.__finish_training()
+                threading.Thread(target=self.send_init).start()
+            
+            elif self.current_round == self.max_rounds:
+                print(f"[{datetime.datetime.now()}] Rounds limit reached. Stopping rounds.")
+                self.__finish_training()
+                threading.Thread(target=self.send_init).start()
+            
+            else:
+                self.current_round += 1
 
     def on_finish(self, msg):
         if msg == 'stop':
@@ -252,13 +280,31 @@ class Client:
             self.client.unsubscribe(["TrainingMsg", "AggregationMsg", "FinishMsg"])
             
             self.client.subscribe([("RoundMsg", 0), ("EvaluationMsg", 0)])
-            self.challenges = []
 
             # send message to trainingMsg topic
             print('Lider eleito, iniciando treinamento')
-            self.start_training()
+            self.send_start_train()
 
     # AGGREGATOR FUNCTIONS
+
+    def send_start_train(self):
+        print(f"[{datetime.datetime.now()}]********************************************************")
+        print(f"[{datetime.datetime.now()}] Starting round {self.current_round+1}/{self.max_rounds}.")
+        
+        possible_clients = self.known_clients.copy()
+        possible_clients.remove(self.uuid)
+
+        clients = random.sample(possible_clients, self.n)
+
+        serialized_weights = [weight.tolist() for weight in self.model.get_weights()]
+        print('type', type(serialized_weights))
+        # sends training message to chosen clients
+
+        # TODO: quebra o cliente talvez pq weights é mt grande
+        res = self.client.publish("TrainingMsg", json.dumps({"clients": clients, "round": self.current_round, "weights": serialized_weights}))
+        print('res', res)
+        # "weights": serialized_weights
+
          
     def start_training(self):
         # chooses n random clients to train except the controller
@@ -276,10 +322,10 @@ class Client:
             self.current_round = round
             clients = random.sample(possible_clients, self.n)
 
-            # serialized_weights = [weight.tolist() for weight in self.model.get_weights()]
+            serialized_weights = [weight.tolist() for weight in self.model.get_weights()]
 
             # sends training message to chosen clients
-            # self.client.publish("TESTE", json.dumps({"clients": str(clients), "round": str(self.current_round), "weights": str(serialized_weights)}))
+            self.client.publish("TrainingMsg", json.dumps({"clients": str(clients), "round": str(self.current_round), "weights": str(serialized_weights)}))
 
             while len(self.weights) < self.n:
                 pass
@@ -304,10 +350,7 @@ class Client:
         
         print(f"[{datetime.datetime.now()}] Training finished.")
 
-        self.client.subscribe(["TrainingMsg", "AggregationMsg", "FinishMsg"])    
-        self.client.unsubscribe(["RoundMsg", "EvaluationMsg"])
 
-        self.__restart_config()
         self.__finish_training()
 
         threading.Thread(target=self.send_init).start()
@@ -335,6 +378,10 @@ class Client:
         return (x_train, y_train), (x_test, y_test)
 
     def __finish_training(self):
+        self.client.subscribe(["TrainingMsg", "AggregationMsg", "FinishMsg"])    
+        self.client.unsubscribe(["RoundMsg", "EvaluationMsg"])
+
+        self.__restart_config()
         self.client.publish("FinishMsg", "stop")
 
     def __restart_config(self):
