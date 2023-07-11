@@ -1,5 +1,6 @@
 .DS_Store
 *_pb2*.py
+emqx/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
