@@ -4,9 +4,11 @@ import datetime
 import argparse
 import hashlib
 import random
+import base64
 import time
 import uuid
 import json
+import sys
 import os
 
 import tensorflow as tf
@@ -27,7 +29,7 @@ def parse_args() -> tuple[int, int]:
     """
     parser = argparse.ArgumentParser(description='Federated Learning')
     parser.add_argument('--port', type=int, help='Port to listen to', default=1883)
-    parser.add_argument('--host', type=str, help='Host to listen to', default='broker.emqx.io')
+    parser.add_argument('--host', type=str, help='Host to listen to', default='localhost')
     parser.add_argument('--save_train', action='store_true', default=False, help='Plot the training results')
     parser.add_argument('--save_test', action='store_true', default=False, help='Plot the testing results')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training')
@@ -89,12 +91,15 @@ class Client:
 
         self.client = mqtt.Client()
         self.client.on_connect = self.on_connect
+        self.client.on_disconnect = self.on_disconnect
         self.client.on_message = self.on_message
 
         self.client.connect(host, port, 60)
 
         self.client.loop_forever()
 
+    def on_disconnect(self, client, userdata, rc):
+        print("Disconnected with result code "+str(rc))
 
     def on_connect(self, client, userdata, flags, rc):
         """
@@ -207,27 +212,33 @@ class Client:
 
     def on_training(self, msg):
         # if self.uuuid in message, trains model
-        print('mensagem de treinamento', msg)
-
-        # clients = json.loads(msg)['clients']
-        # weights = [np.array(weight) for weight in json.loads(msg)['weights']]
-        # round = json.loads(msg)['round']
-        # if self.uuid in clients:
-        #     self.train_model(weights, round)
+        print('mensagem de treinamento')
+        message = json.loads(msg)
+        clients = message['clients']
+        weights = [np.array(weight) for weight in message['weights']]
+        round = message['round']
+        if self.uuid in clients:
+            self.train_model(weights, round)
 
 
     def on_round(self, msg):
-        if len(self.weights) < self.n:
-            self.weights.append({'weights': json.loads(msg)['weights'], 'sample_amount': json.loads(msg)['sample_amount']})
+        message = json.loads(msg)
 
-        else:
+        if len(self.weights) < self.n:
+            weights = [np.array(weight) for weight in message['weights']]
+            sample_amount = message['sample_amount']
+            self.weights.append({'weights': weights, 'sample_amount': sample_amount})
+
+        if len(self.weights) == self.n:
             avg_weights = self.__federeated_train()
             self.model.set_weights(avg_weights)
-
-            self.client.publish("AggregationMsg", json.dumps({"weights": avg_weights }))
+            
+            serialized_weights = [weight.tolist() for weight in avg_weights]
+            self.client.publish("AggregationMsg", json.dumps({"weights": serialized_weights }))
         
     def on_aggregation(self, msg):
-        pass
+        # TODO: fazer a agregação
+        print('mensagem de agregação')
 
     def on_evaluation(self, msg):
         if len(self.metrics) < self.known_clients:
@@ -297,13 +308,10 @@ class Client:
         clients = random.sample(possible_clients, self.n)
 
         serialized_weights = [weight.tolist() for weight in self.model.get_weights()]
-        print('type', type(serialized_weights))
+
         # sends training message to chosen clients
 
-        # TODO: quebra o cliente talvez pq weights é mt grande
-        res = self.client.publish("TrainingMsg", json.dumps({"clients": clients, "round": self.current_round, "weights": serialized_weights}))
-        print('res', res)
-        # "weights": serialized_weights
+        self.client.publish("TrainingMsg", json.dumps({"clients": clients, "round": self.current_round, "weights": serialized_weights}))
 
          
     def start_training(self):
@@ -410,8 +418,8 @@ class Client:
         """
         print(f"[{datetime.datetime.now()}] Calculating federated average.")
 
-        weights_list = [result.weights for result in self.weights]
-        sample_sizes = [result.sample_amount for result in self.weights]
+        weights_list = [result['weights'] for result in self.weights]
+        sample_sizes = [result['sample_amount'] for result in self.weights]
 
         new_weights = []
         for layers in zip(*weights_list):
@@ -456,11 +464,10 @@ class Client:
         x_train = self.x_train[idx_train]
         y_train = self.y_train.numpy()[idx_train]
 
-        model_weights = ModelBase64Decoder(weights)
-        self.model.set_weights(model_weights)
+        self.model.set_weights(weights)
 
         history = self.model.fit(x_train, y_train, batch_size=self.batch_size ,epochs=1, verbose=False)
-        model_weights = ModelBase64Encoder(self.model.get_weights())
+        model_weights = [weight.tolist() for weight in self.model.get_weights()]
 
         print(f"[{datetime.datetime.now()}] Training finished. Results:")
         print(f"[{datetime.datetime.now()}] Accuracy: {history.history['accuracy'][0]}")
