@@ -72,7 +72,7 @@ class Client:
         self.port = port
         self.host = host
         self.known_clients = [self.uuid]
-        self.current_round = 0
+        self.current_round = 1
 
         self.min_clients_per_round = min_clients_per_round
         self.max_rounds = max_rounds
@@ -220,7 +220,6 @@ class Client:
         if self.uuid in clients:
             self.train_model(weights, round)
 
-
     def on_round(self, msg):
         message = json.loads(msg)
 
@@ -237,33 +236,24 @@ class Client:
             self.client.publish("AggregationMsg", json.dumps({"weights": serialized_weights }))
         
     def on_aggregation(self, msg):
-        # TODO: fazer a agregação
-        print('mensagem de agregação')
+        message = json.loads(msg)
+        weights = [np.array(weight) for weight in message['weights']]
+
+        self.test_model(weights)
 
     def on_evaluation(self, msg):
-        if len(self.metrics) < self.known_clients:
+        # receives accuracy from all clients except itself
+        if len(self.metrics) < len(self.known_clients) - 1:
             self.metrics.append(json.loads(msg)['accuracy'])
-        else:
-            accuracy_mean = np.mean(self.metrics)
-            print(f"[{datetime.datetime.now()}] Mean accuracy: {accuracy_mean * 100: 0.2f}.")
 
-            # if self.save_test:
-            #     self.__save_test(accuracy_mean)
+        if len(self.metrics) == len(self.known_clients) - 1:
+            self.evaluation()
+        
+        print('mensagem de avaliação', msg)
 
-            if accuracy_mean >= self.accuracy_threshold:
-                print(f"[{datetime.datetime.now()}] Accuracy threshold reached. Stopping rounds.")
-                self.__finish_training()
-                threading.Thread(target=self.send_init).start()
-            
-            elif self.current_round == self.max_rounds:
-                print(f"[{datetime.datetime.now()}] Rounds limit reached. Stopping rounds.")
-                self.__finish_training()
-                threading.Thread(target=self.send_init).start()
-            
-            else:
-                self.current_round += 1
 
     def on_finish(self, msg):
+        print('mensagem de finalização', msg)
         if msg == 'stop':
             self.__restart_config()
             threading.Thread(target=self.send_init).start()
@@ -300,7 +290,7 @@ class Client:
 
     def send_start_train(self):
         print(f"[{datetime.datetime.now()}]********************************************************")
-        print(f"[{datetime.datetime.now()}] Starting round {self.current_round+1}/{self.max_rounds}.")
+        print(f"[{datetime.datetime.now()}] Starting round {self.current_round}/{self.max_rounds}.")
         
         possible_clients = self.known_clients.copy()
         possible_clients.remove(self.uuid)
@@ -313,6 +303,29 @@ class Client:
 
         self.client.publish("TrainingMsg", json.dumps({"clients": clients, "round": self.current_round, "weights": serialized_weights}))
 
+    def evaluation(self):
+        accuracy_mean = np.mean(self.metrics)
+        print(f"[{datetime.datetime.now()}] Mean accuracy: {accuracy_mean * 100: 0.2f}.")
+
+        # if self.save_test:
+        #     self.__save_test(accuracy_mean)
+
+        if accuracy_mean >= self.accuracy_threshold:
+            print(f"[{datetime.datetime.now()}] Accuracy threshold reached. Stopping rounds.")
+            self.__finish_training()
+            threading.Thread(target=self.send_init).start()
+        
+        elif self.current_round == self.max_rounds:
+            print(f"[{datetime.datetime.now()}] Rounds limit reached. Stopping rounds.")
+            self.__finish_training()
+            threading.Thread(target=self.send_init).start()
+        
+        else:
+            self.weights = []
+            self.metrics = []
+
+            self.current_round += 1
+            self.send_start_train()
          
     def start_training(self):
         # chooses n random clients to train except the controller
@@ -386,7 +399,7 @@ class Client:
         return (x_train, y_train), (x_test, y_test)
 
     def __finish_training(self):
-        self.client.subscribe(["TrainingMsg", "AggregationMsg", "FinishMsg"])    
+        self.client.subscribe([("TrainingMsg", 0), ("AggregationMsg", 0), ("FinishMsg", 0)])
         self.client.unsubscribe(["RoundMsg", "EvaluationMsg"])
 
         self.__restart_config()
@@ -403,9 +416,9 @@ class Client:
 
         self.client.subscribe([("InitMsg", 0), ("ElectionMsg", 0)])
 
-        if not self.save_model:
-            self.model = define_model((28,28,1), 10)   
-        self.current_round = 0 
+        # if not self.save_model:
+        #     self.model = define_model((28,28,1), 10)   
+        self.current_round = 1
 
     def __federeated_train(self):
         """
@@ -500,8 +513,7 @@ class Client:
         x_test = self.x_test[idx_test]
         y_test = self.y_test.numpy()[idx_test]
         
-        model_weights = ModelBase64Decoder(weights)
-        self.model.set_weights(model_weights)
+        self.model.set_weights(weights)
         results = self.model.evaluate(x_test, y_test, batch_size=self.batch_size, verbose=False)
 
         print(f"[{datetime.datetime.now()}] Testing finished. Results:")
