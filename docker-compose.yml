@@ -1,0 +1,16 @@
+version: '3'
+services:
+  emqx:
+    image: emqx/emqx:latest
+    environment:
+      - EMQX_NAME=emqx
+      - EMQX_HOST=localhost
+      - EMQX_LISTENER__TCP__EXTERNAL=1883:1883
+      - EMQX_LOADED_PLUGINS=emqx_recon,emqx_retainer,emqx_management
+      - EMQX_MAX_PACKET_SIZE=262144000  # 250MB in bytes
+    ports:
+      - 1883:1883
+      - 18083:18083
+    volumes:
+      - ./emqx/data:/opt/emqx/data
+      - ./emqx/log:/opt/emqx/log
