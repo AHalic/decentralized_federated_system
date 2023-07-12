@@ -115,17 +115,23 @@ class Client:
         client.subscribe([("InitMsg", 0), ("ElectionMsg", 0), ("TrainingMsg", 0), ("AggregationMsg", 0), ("FinishMsg", 0)])
         threading.Thread(target=self.send_init).start()
 
-    def send_init(self):
+    def send_init(self, timeout_start=2, last=False):
         """
         Send init message until all clients are known or timeout.
         """
-        start = time.time()
         msg = json.dumps({"ClientID": self.uuid})
 
-        while time.time() - start < TIMEOUT_LIMIT or len(self.known_clients) < QTDE_CLIENTS:
+        if last:
             self.client.publish("InitMsg", msg)
-            time.sleep(10)
-        quit()
+        else:
+            time.sleep(timeout_start)
+
+            start = time.time()
+
+            while time.time() - start < TIMEOUT_LIMIT and len(self.known_clients) < QTDE_CLIENTS:
+                self.client.publish("InitMsg", msg)
+                time.sleep(10)
+
 
     def on_message(self, client, userdata, msg):
         """
@@ -186,7 +192,8 @@ class Client:
             self.known_clients.append(client_id)
         if len(self.known_clients) == QTDE_CLIENTS:
             self.client.unsubscribe("InitMsg")
-            print('iniciando votação')
+            threading.Thread(target=self.send_init(last=True)).start()
+            print('\n---iniciando votação---')
             self.send_voting()
 
     def on_voting(self, msg):
@@ -212,7 +219,7 @@ class Client:
 
     def on_training(self, msg):
         # if self.uuuid in message, trains model
-        print('mensagem de treinamento')
+
         message = json.loads(msg)
         clients = message['clients']
         weights = [np.array(weight) for weight in message['weights']]
@@ -247,15 +254,15 @@ class Client:
             self.metrics.append(json.loads(msg)['accuracy'])
 
         if len(self.metrics) == len(self.known_clients) - 1:
-            self.evaluation()
-        
-        print('mensagem de avaliação', msg)
-
+            self.evaluation()     
 
     def on_finish(self, msg):
-        print('mensagem de finalização', msg)
-        if msg == 'stop':
+        message = msg.decode('utf-8')
+    
+        print('\nTreinamento encerrado, uma nova eleição começará em breve\n')
+        if message == 'stop':
             self.__restart_config()
+
             threading.Thread(target=self.send_init).start()
 
     def send_voting(self):
@@ -266,6 +273,7 @@ class Client:
         vote_msg = json.dumps({"ClientID": self.uuid, "VoteID": str(vote)})
 
         self.client.publish("ElectionMsg", vote_msg)    
+
 
     def elect_leader(self):
         """
@@ -285,6 +293,8 @@ class Client:
             # send message to trainingMsg topic
             print('Lider eleito, iniciando treinamento')
             self.send_start_train()
+        else:
+            self.client.subscribe([("TrainingMsg", 0), ("AggregationMsg", 0), ("FinishMsg", 0)])
 
     # AGGREGATOR FUNCTIONS
 
@@ -312,12 +322,18 @@ class Client:
 
         if accuracy_mean >= self.accuracy_threshold:
             print(f"[{datetime.datetime.now()}] Accuracy threshold reached. Stopping rounds.")
-            self.__finish_training()
-            threading.Thread(target=self.send_init).start()
+            
+            threading.Thread(target=self.__finish_training).start()
+            self.__restart_config()
+            
+            threading.Thread(target=self.send_init(5)).start()
         
         elif self.current_round == self.max_rounds:
             print(f"[{datetime.datetime.now()}] Rounds limit reached. Stopping rounds.")
-            self.__finish_training()
+            
+            threading.Thread(target=self.__finish_training).start()
+            self.__restart_config()
+
             threading.Thread(target=self.send_init).start()
         
         else:
@@ -399,22 +415,22 @@ class Client:
         return (x_train, y_train), (x_test, y_test)
 
     def __finish_training(self):
-        self.client.subscribe([("TrainingMsg", 0), ("AggregationMsg", 0), ("FinishMsg", 0)])
+        # self.client.subscribe([("TrainingMsg", 0), ("AggregationMsg", 0), ("FinishMsg", 0)])
         self.client.unsubscribe(["RoundMsg", "EvaluationMsg"])
-
-        self.__restart_config()
         self.client.publish("FinishMsg", "stop")
+
+
 
     def __restart_config(self):
         """
         Restarts the server configuration.
         """
+        self.client.subscribe([("InitMsg", 0), ("ElectionMsg", 0)])
+
         self.known_clients = [self.uuid]
         self.votes = []
         self.weights = []
         self.metrics = []
-
-        self.client.subscribe([("InitMsg", 0), ("ElectionMsg", 0)])
 
         # if not self.save_model:
         #     self.model = define_model((28,28,1), 10)   
