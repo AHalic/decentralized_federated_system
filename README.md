@@ -1,5 +1,5 @@
 # Decentralized Federated Learning
-This is a Decentralized Federated Learning implementation using the algorithm Federated Average. Video explanation can be found in this [video]() (video is in portuguese).
+This is a Decentralized Federated Learning implementation using the algorithm Federated Average. Video explanation can be found in this [video](https://youtu.be/LRtS7xa2Ebk) (video is in portuguese).
 
 Implemeted by: Beatriz Maia, Iago Cerqueira & Sophie Dilhon
 
