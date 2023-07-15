@@ -1,5 +1,5 @@
 # Decentralized Federated Learning
-This is a Federated Learning implementation using the algorithm Federated Average. Video explanation can be found in this [video]() (video is in portuguese).
+This is a Decentralized Federated Learning implementation using the algorithm Federated Average. Video explanation can be found in this [video]() (video is in portuguese).
 
 Implemeted by: Beatriz Maia, Iago Cerqueira & Sophie Dilhon
 
@@ -30,106 +30,53 @@ Finally, install the dependencies with
 pip install -r requirements.txt
 ```
 
+For communication between clients a broker is created, make sure you have Docker installed for that and run it with
+```sh
+docker compose up
+```
+The broker will be avaible on port `1883`.
+
 ### Execution
-To execute the system, first run one of the following scripts. They are responsible to create the files used by the clients and server for the communication via grpc.
 
+To run the clients, execute the following commands in different terminals (at least `{qtd_clients}`). 
 ```sh
-# Mac or Linux
-./config.sh
-
-# Windows
-.\config.bat
+python client.py --host {h} --port {p} --batch_size {b} --qtd_clients {k} --train_clients {n} --accuracy_threshold {a} --max_rounds {r}
 ```
-
-
-To run the server and clients, execute the following commands in different terminals. 
-```sh
-python server.py --min_clients_per_round {n} --max_clients_total {m} --max_rounds {r} --accuracy_threshold {a} --timeout {t} --save_model --save_test
-python client.py --ipv4 {i} --batch_size {b} --save_train --save_test
-```
-
-Server flags meaning:
---min_clients_per_round: Minimum number of clients per round.
---max_clients_total: Maximum number of clients per round.
---max_rounds: Maximum number of rounds.
---accuracy_threshold: Minimum accuracy threshold.
---timeout: Timeout in seconds for the server between training sessions.
---save_model: Save the model after training. This means that the server will use this model for next training sessions.
---save_test: Saves the test results in a csv file.
 
 Client flags meaning:
---ipv4: IPv4 address of the client.
---save_train: Save the training results to csv file.
---save_test: Save the testing results to csv file.
+--port: Port on which the broker is avaible
+--host: Host on which the broker is avaible
 --batch_size: Batch size for training.
+--qtd_clients: Number of clients connected to the broker.
+--train_clients: Number of clients training per round.
+--max_rounds: Maximum number of rounds.
+--accuracy_threshold: Minimum accuracy threshold.
 
-Several clients can be created. The flags are not obligatory, the server will use default values if no argument is passed.
+
+Several clients can be created, it must be at least `qtd_clients`. The flags are not obligatory, the server will use default values if no argument is passed.
 
 ## Implementation
 
 ### Communication
-To stablish the communication between server and clients and vice versa, the grpc lib was used, and two proto files were created. The first, [server.proto](proto/server.proto), is responsible for implementing the server's avaiable methods, and the other one, [client.proto](proto/client.proto), is responsible for implementing the clients's avaiable methods. For this implementation, the side that is resposible for calculating the centralized federated average is the one called the server, and the side responsible for training models "locally" are the clients.
+The communication between clients is done using the Publisher/Subscriber model (emqx mqtt broker). To stablish a connection all clients must send a `InitMsg` with their ID's. This makes them become a known client.
 
-#### Methods
 
-The server only has one method, which is responsible for receiving and saving the client's data, and checking if the training can start.
-```sh
-add_trainer(trainer_request) returns (success);
-```
+### Election
+For this implementation, the side that is resposible for calculating the centralized federated average will be called as server, and the side responsible for training models "locally" as clients, though initially every process is a client. One client must then be elected as server, for that every known client sends a `ElectionMsg` with their vote, the biggest becomes the server.
 
-As for the client, three methods were created. 
-- The first is responsible for training the model with the local data, and it returns to the server the model's weights. 
-    ```sh
-    train_model(models_weights_input) returns (models_weights_output);
-    ```
-- The second one, receives the aggregated weights and tests the model with the local data.
-    ```sh
-    test_model(models_weights) returns (metrics_results);
-    ```
-- The last one ends the client's server
-    ```sh
-    finish_training(finish_message) returns (finish_message);
-    ```
+### How it works
+The server is responsible for starting and finishing training. After being elected it will start the training, sending a `TrainingMsg` containing the model weights, current round and the clients that will train ID's, as well as the training session id.
 
-### Server
-The server runs on `localhost:8080` and it is responsible for starting and finishing training. The code that represents it can be found at [server.py](server.py). The genneral logic behind it can be described by the following steps:
+After training, each client sends a `RoundMsg` with their models weights, sample size and session id. The server reads every message and aggregates the weights calculating the federated average, where models that trained with more samples are given more importance. This can be summarized by:
 
-1. Server is initialized and connected to localhost:8080. It waits for clients to connect.
-2. When `max_clients_total` connected to the server, it will start the training, sending to each of them the model weights, current round and number of clients training, as well as the training session id. To do that, the server must connect to the client's servers using their ipv4 and port (adress).
-3. After training, each client sends back to the server their models weights.
-4. The server aggregates the weights calculating the federated average, where models that trained with more samples are given more importance. This can be summarized by:
     ```py
     sum(weights * local_sample_size) / sum(local_sample_size)
     ```
-5. The new weights are sent to every client (even non trainers), who then test the model and return the accuracy trained on their local data. 
-6. Finally, the accuracies's mean is compared to the threshold, if it's smaller and current round < `max_rounds` then a new round starts. Else, training ends,  clients close their server and the server goes back to step 2.
+The server publishes an `AggregationMsg` message with the new weights, all clients (even non trainers) test the model and send an `EvaluationMsg` message with the accuracy obtained on their local data.
 
-In order for the server to be able to both receive request ad well as idely wait for training and start training, the usage of thread was necessary. When the `TrainerAgregator` class is initialized in the server, the following code is executed:
+Finally the server analyse if the mean accuracy is equal or greater than the threshold or if the max round is reached. If none of that is applicable, a new round begins. If not, a `FinishMsg` is sent containing the word 'stop' and the training is finished. Later on a new election begins to restart the training process.
 
-```py
-threading.Thread(target=self.__train).start()
-```
-
-This makes it so that a second thread is running, executing the __train method. This method is the one responible for listening in and triggering a training session. In order to have a time difference between each training session, we added a timeout after a session is completed. This means that if a session was to be finilized and new clients were available, training would only begin after the timeout was finished.
-
-An important decision made during the implementation was permiting new clients to join when a session has started. This means that while that client will not be participating in the current training round, it can be chosen for the next rounds.
-
-The clients runs on a random generate port on `localhost`, however that can be changed if the ipv4 argument is configured elsewise. The code that represents each client can be found at [client.py](client.py). They end up having a type of behavior that is both of a client and a server. As a client, they add trainers to the server. As a server, they train the models and return the weights.
-
-To simulate data on the client side, we use tensorflow MNIST and reduce the train and test datasets. During the train portion of the code, this can be observed by
-```py
-percentage = int(1 / (request.number_of_trainers + 10) * 100)
-min_lim = min(5, percentage)
-random_number = randint(min_lim, percentage) / 100
-
-sample_size_train = int(random_number * len(self.x_train))
-```
-This section of code attempts to get a portion of the train data depending on how many trainers are currently in that round. In order for the clients to have an even smaller dataset, making it easier to see the models improvements between rounds in the analysis, the denominator is increased by 10.  In order to also have a variety of weight, where each client mught contribute differently to the federated average calculation, we added an extra randomizing step. This step can be translated into: choose a sample size that is between 5% and the percentage calculate beforehand. We added a min_lim just in case the percentage calculated before is smaller than 5%. 
-
-For test, we consider the same size of data between all trainers. 
-```py
-sample_size_test = int((1/request.number_of_trainers)*len(self.x_test))
-```
+Data is divided as in [previous implementation of federated learning](https://github.com/beamaia/federated_system_mnist).
 
 ## Analysis
 
