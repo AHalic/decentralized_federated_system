@@ -97,9 +97,11 @@ As the rounds increases, the accuracy as well, but in a slower ramp.
 Analyzing the average test accuracy by the server size, we can also see this increase to the accuracy. While the training models start in rather lower percentage, the test considers the federate average calculated model, and it shows what observed in round 1 of training. Round 0 test results are already over 90%. As the rounds increases, so does the accuracy. 
 
 Accuracy using MQQT:
+
 ![img](analysis/server_test_acc_dd2bdfce-0c42-4360-9886-7ca3ce305375.png)
 
 Accuracy using GRPC:
+
 ![img](analysis/grpc_assets/server_test_acc_000d635f-2206-4ab3-99b2-bd49a3c75fad.png)
 
 Both of them have a very similar curve. The MQQT result is slightly better, but this can be most likely due to the randomness of the data, since both are around 97.5%.
