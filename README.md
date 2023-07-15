@@ -82,21 +82,40 @@ Data is divided as in [previous implementation of federated learning](https://gi
 
 This analysis is done considering that 10 max trainers were used. For each round, the minimum amoun of trainers were 5, but more could be used. A total of 10 rounds were made.
 
-In the image below, we can follow the training of the 10 different clients. The models start with a few data examples, which results in an accuracy of around 80%. Not all clients trained in the first round (or all rounds), only clients with an 'o' marker in round 0. 
-![img](analysis/train_acc_000d635f-2206-4ab3-99b2-bd49a3c75fad.png)
+In the image below, we can follow the training of the 9 different clients. The models start with a few data examples, which results in an accuracy of around 80%. Not all clients trained in the first round (or all rounds), only clients with an 'o' marker in round 0. 
+![img](analysis/train_acc_dd2bdfce-0c42-4360-9886-7ca3ce305375.png)
 
-After the federated average is calculated and sent to the new clients in round 1, the accuracy shots up. This shows that the usage of the algorithm helped tremendously, with an increase of 10%. This indicates that even though the clients between themselves had limited data, when calculting the average between them, it was possible to create a more accurate model. 
+We can compare this to the first project and see that this is all very similar to the result we had. One thing however is different. In the image above there are only 9 clients plotted, while the image below, referencing the first project, has 10 clients. Both experiments had 10 trainers, however the first experiment had a centralized training server that could use the 10 trainers simultaneously if needed. With a decentralized server, one of the trainers must be the training server that will be responsible for calculating the federated average, and for that reason not all of the trainers will be available to train locally. 
+
+![img](analysis/grpc_assets/train_acc_000d635f-2206-4ab3-99b2-bd49a3c75fad.png)
+
+After the federated average is calculated and sent to the new clients in round 1, the accuracy shots up, as noticed in the first project. This shows that the usage of the algorithm helped tremendously, with an increase of 10%. This indicates that even though the clients between themselves had limited data, when calculting the average between them, it was possible to create a more accurate model. Most of this text can be observed in the first project as well, since the perfomance is very similar.
 
 As the rounds increases, the accuracy as well, but in a slower ramp.
 
 
 Analyzing the average test accuracy by the server size, we can also see this increase to the accuracy. While the training models start in rather lower percentage, the test considers the federate average calculated model, and it shows what observed in round 1 of training. Round 0 test results are already over 90%. As the rounds increases, so does the accuracy. 
-![img](analysis/server_test_acc_000d635f-2206-4ab3-99b2-bd49a3c75fad.png)
 
-Running for different of rounds, it's to observe how the accuracy increases, however it's not as big of an increase. The MNIST data is very simple, therefore this is expected.
+Accuracy using MQQT:
+![img](analysis/server_test_acc_dd2bdfce-0c42-4360-9886-7ca3ce305375.png)
+
+Accuracy using GRPC:
+![img](analysis/grpc_assets/server_test_acc_000d635f-2206-4ab3-99b2-bd49a3c75fad.png)
+
+Both of them have a very similar curve. The MQQT result is slightly better, but this can be most likely due to the randomness of the data, since both are around 97.5%.
+
+Running for different of rounds, it's possible to observe how the accuracy increases, however it's not as big of an increase. The MNIST data is very simple, therefore this is expected.
 
 ![img](analysis/server_test_acc_10_20_40.png)
 
-These results can be compared to [Lab 2](https://github.com/AHalic/SisDist_Labs/tree/main/Lab_2) results. While the traditional way of training, with all of the MNIST data, resulted into a near 100% accuracy, the federated average result was also extremely high. Our implementation had a similar result to the flwr implementation. 
+This follows the same example as the usage of GRPC, as shown in the image below.
 
-![img](https://raw.githubusercontent.com/AHalic/SisDist_Labs/main/Lab_2/results_atv1/accuracy.png)
+![img](analysis/grpc_assets/server_test_acc_10_20_40.png)
+
+In all of these images, it's really hard to pin point different results in terms of perfomance. They are all using the same algorithm, with once again, the only difference is the max numbers of trainers that they can use during training. 
+
+One thing that we can also observe is time and computational power. CPU and RAM was not measured, so this is based on mostly personal experience. This situation is very hypothetical, where we simulate 10 clients locally, in one computer. In real life, these clients would be in different devices, with different computacional powers, and we wouldn't have to run all of the processes on one server. Using GRPC was noticebly taxing, with the computer being unable to do any other activity other than train the models. If we tried using other programs, the computer was significantly slow and would sometimes crash. This however, did not happen when using MQQT. 
+
+Despite this obvious behaviour in terms of slowing down the computer, where MQQT had a better behaviour than GRPC, in terms of time it was slightly slower. However, once again, we are running locally in a hypothetical situationl, so latentcy can't be properly investigated and measured. But, for comparinson, we can see in the graph that GRPC in general was quicker thant MQQT. With the amount of rounds increasing, the difference in time would almost double. We were using docker as well for the MQQT, so this is a possibility of why there is a time difference. 
+
+![img](analysis/time_per_protocol.png)
