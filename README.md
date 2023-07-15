@@ -34,7 +34,7 @@ For communication between clients a broker is created, make sure you have Docker
 ```sh
 docker compose up
 ```
-The broker will be avaible on port `1883`.
+The broker will be avaible on port `1883`. This is important because it changes the max packet size limit, and without it the weights can't be sent via message.
 
 ### Execution
 
@@ -44,13 +44,14 @@ python client.py --host {h} --port {p} --batch_size {b} --qtd_clients {k} --trai
 ```
 
 Client flags meaning:
---port: Port on which the broker is avaible
---host: Host on which the broker is avaible
---batch_size: Batch size for training.
---qtd_clients: Number of clients connected to the broker.
---train_clients: Number of clients training per round.
---max_rounds: Maximum number of rounds.
---accuracy_threshold: Minimum accuracy threshold.
+
+    --port: Port on which the broker is avaible
+    --host: Host on which the broker is avaible
+    --batch_size: Batch size for training.
+    --qtd_clients: Number of clients connected to the broker.
+    --train_clients: Number of clients training per round.
+    --max_rounds: Maximum number of rounds.
+    --accuracy_threshold: Minimum accuracy threshold.
 
 
 Several clients can be created, it must be at least `qtd_clients`. The flags are not obligatory, the server will use default values if no argument is passed.
