@@ -69,7 +69,6 @@ class Client:
             port (int): Port to connect to.
             host (str): Host to connect to.
         """
-        print('UUID: ', self.uuid)
         self.port = port
         self.host = host
         self.known_clients = [self.uuid]
